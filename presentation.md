@@ -12,7 +12,7 @@ TechHub Swiss<br/>
 </div>
 
 <div id="bottom-right">
-3AP Lightnight talk / 'Brain snack'<br/>
+3AP Lightning talk / 'Brain snack'<br/>
 14 April, 2022
 </div>
 ---
