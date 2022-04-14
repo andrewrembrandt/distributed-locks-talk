@@ -1,15 +1,18 @@
 ---
-theme: https://revealjs-themes.netlify.com/css/theme/robot-lung.css
+theme: robot-lung.css
 ---
 ### Cloud / Distributed Systems: Handling concurrency / synchronization with DB locking
 
+Andrew Rembrandt,<br>andrew@3ap.ch
+
 <div id="bottom-left">
-Andrew Rembrandt, andrew@3ap.ch
+TechHub Swiss<br/>
+24 February, 2022
 </div>
 
 <div id="bottom-right">
-TechHub Swiss<br/>
-24 February, 2022
+3AP Lightnight talk / 'Brain snack'<br/>
+14 April, 2022
 </div>
 ---
 ### When & methods of synchronisation / locking
@@ -45,23 +48,55 @@ TechHub Swiss<br/>
 
 ---
 ### Optimistic Locking (cont)
+* Typical sql statement:
 ```sql
-update 
-    item 
-set 
-    version=1, 
-    amount=10 
-where 
-    id='abcd1234' 
-and 
-    version=0
+    update 
+        item 
+    set 
+        version=1, 
+        amount=10 
+    where 
+        id='abcd1234' 
+    and 
+        version=0
 ```
 * Existing entity locking (version / lock timestamp column)
 * Dedicated lock table
     * Decoupling provides more flexibility => 'multi-process mutex'
 ---
-### DB Locking
-* Reactive lock-table approach
+### Reactive example
+```java
+  public Mono<FolioEntity> createOrUpdateFolioTransaction(Event event) {
+    return doCreateOrUpdateFolioTransaction(event)
+        .retryWhen(
+            Retry.backoff(5, Duration.ofMillis(300))
+                .filter(OptimisticLockingFailureException.class::isInstance)
+                .doBeforeRetry(
+                    s ->
+                        log.warn("Optimistic locking failure while createOrUpdateFolioTransaction for ...", ...)
+  }
+
+
+  private Mono<FolioEntity> doCreateOrUpdateFolioTransaction(Event event) {
+    return Mono.defer(() -> {
+            FolioEntity folioEntity = null;
+            Optional<FolioEntity> folio =
+                folioRepository.findByFolioIdLocked(event.getObjectId());
+
+            if (folio.isEmpty()) {
+              folioEntity = mapper.createFolioEntity(event);
+            } else {
+              folioEntity = mapper.updateFolioEntity(event, folio.get());
+            }
+            return folioRepository.save(folioEntity);
+          })
+      .flatMap(folioRepositoryService::addTransientFields);
+  }
+```
+<!-- .element: class="codewide" -->
+---
+---
+### Generic DB shared lock table
 ```java
   public <T> Mono<T> acquireLock(Long sourceId, String reportableId,
     LockType lockType, Supplier<Mono<T>> callbackOnLockAcquisition) {
@@ -69,32 +104,22 @@ and
             () ->
                 sharedLockRepository
                     .findByLockTypeAndSourceIdLocked(lockType, sourceId)
-                    .or(
-                        () ->
-                            Optional.of(
+                    .or(() -> Optional.of(
                                 sharedLockRepository.save(SharedLockEntity.builder()
-                                        .lockType(lockType).sourceId(sourceId).failureCount(0)
-                                        .expiryCount(0).build())))
+                                  .lockType(lockType).sourceId(sourceId).failureCount(0)
+                                  .expiryCount(0).build())))
                     .flatMap(
                         lock -> {
-                          if (lock.getAcquiredLockTime() != null) {
-                            return Optional.empty();
-                          }
-
+                          if (lock.getAcquiredLockTime() != null) return Optional.empty();
                           lock.setAcquiredLockTime(Instant.now());
-                          lock.setAcquiredBy(ProcessHandle.current().info().command()  + ":" + ProcessHandle.current().pid());
-
                           val updatedLock = sharedLockRepository.save(lock);
                           return Optional.of(updatedLock);
                         }))
-        .onErrorResume(
-            t ->
-                t instanceof ObjectOptimisticLockingFailureException
-                    || t instanceof DataIntegrityViolationException,
-            e -> {
-              return Mono.empty();
+        .onErrorResume( // OpLock exeception for existing rows, integrity violation for conflicting row inserts
+            t -> t instanceof ObjectOptimisticLockingFailureException || t instanceof DataIntegrityViolationException,
+            e -> Mono.empty()
             })
-        .flatMap(lock -> callbackOnLockAcquisition.get())
+        .flatMap(lock -> callbackOnLockAcquisition.get()) // We have acquired the lock, call the callback
         .flatMap(
             resultItem ->
                 tenantContext.fromSupplier(
@@ -105,6 +130,7 @@ and
                     }));
   }
 ```
+<!-- .element: class="codewide" -->
 ---
 ### 5 mins != expert :)
 * To lock or not to lock
