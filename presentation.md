@@ -1,5 +1,6 @@
 ---
 theme: robot-lung.css
+highlightTheme: foundation
 ---
 ### Cloud / Distributed Systems: Handling concurrency / synchronization with DB locking
 
@@ -94,7 +95,6 @@ TechHub Swiss<br/>
   }
 ```
 <!-- .element: class="codewide" -->
----
 ---
 ### Generic DB shared lock table
 ```java
